@@ -1569,7 +1569,7 @@
 			repositoryURL = "https://github.com/krzyzanowskim/OpenSSL.git";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 3.3.3001;
+				minimumVersion = 3.6.3;
 			};
 		};
 		F98C1F392B91C5BB00C8EC6C /* XCRemoteSwiftPackageReference "LaunchAtLogin" */ = {
