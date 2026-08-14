@@ -1,10 +1,18 @@
-# Integrating WireGuard
+# Integrating OpenVPN+NE
+
+## Minimum OS Support
+
+Ensure your app targets the following minimum OS versions to use OpenVPN with Network Extension:
+
+- **iOS**: 15.0 or later  
+- **macOS**: 12.0 or later  
+- **tvOS**: 18.0 or later  
 
 ## Table of contents
 
 1. [Project Setup](#1-project-setup)
     1. [Add the required permissions for the app](#11-add-the-required-permissions-for-the-app)
-    2. [Integrate WireGuard Network Extension](#12-integrate-wireguard-network-extension)
+    2. [Integrate OpenVPN Network Extension](#12-integrate-openvpn-network-extension)
         1. [Set Up the Network Extension Target](#121-set-up-the-network-extension-target)
         2. [Create the Packet Tunnel Provider Class](#122-create-the-packet-tunnel-provider-class)
         3. [Set Up Main Entry Point](#123-set-up-main-entry-point)
@@ -17,15 +25,16 @@
 6. [Limitations, Features, and Compatibility](#6-limitations-features-and-compatibility)
 7. [Handshake Update Implementation](#7-handshake-update-implementation)
 
+
 ## 1. Project Setup
 
 ### 1.1 Add the required permissions for the app
 
 Add the required permissions for the app in the ***project file*** and initialize the app using the Primary Objects.
-> Refer to: [VPNKit iOS Guide](https://github.com/wlvpn/ConsumerVPN-macOS/blob/main/SDK/Documentation/VPNKit%20iOS%20Guide.md)  
-> Refer to: [VPNKit macOS Guide](https://github.com/wlvpn/ConsumerVPN-macOS/blob/main/SDK/Documentation/VPNKit%20macOS%20Guide.md)
+> Refer to: [VPNKit macOS Guide](https://github.com/wlvpn/ConsumerVPN-macOS/blob/main/SDK/Documentation/VPNKit%20macOS%20Guide.md)  
+> Refer to: [VPNKit iOS Guide](https://github.com/wlvpn/ConsumerVPN-macOS/blob/main/SDK/Documentation/VPNKit%20iOS%20Guide.md) 
 
-### 1.2 Integrate WireGuard Network Extension
+### 1.2 Integrate OpenVPN Network Extension
 
 #### 1.2.1 Set Up the Network Extension Target
 
@@ -38,21 +47,23 @@ Add the required permissions for the app in the ***project file*** and initializ
 #### 1.2.2 Create the Packet Tunnel Provider Class
 
 - **File:** `PacketTunnelProvider.swift`
-- **Description:** This file defines the `PacketTunnelProvider` class, which inherits from `WGPacketTunnelProvider` provided by the VPKWireGuardExtension framework.
+- **Description:** This file defines the `PacketTunnelProvider` class, which inherits from `OVPacketTunnelProvider` provided by the VPKOpenVPNNetworkExtension framework.
 
 ##### Key Points:
 - **Initialization:** In the initializer, you can configure settings for traffic monitoring (optional).
 - **Traffic Monitoring:** Override `vpnDidReceiveTrafficDataCounter` to handle and debug traffic data if traffic monitoring is enabled.
 - **Handshake Timestamp:** Use `lastHandshakeDate` to inspect the last successful handshake timestamp and `isInternetAvailable` to inspect network availability.
-- **Disconnect VPN:** Call `disconnect()` method () to terminate the VPN connection.
+- **Disconnect VPN:** Call `disconnect()` to terminate the VPN connection from the provider.
 - **Bypass Traffic:** Call `bypassAllTraffic()` to bypass all traffic from the VPN connection.
-- **Handshake Update Monitoring:** Implemented a new `vpnHandshakeUpdateDetected(error: Error?)` method in `WGPacketTunnelProvider`. Subclasses can now override this method to receive notifications and handle VPN handshake updates according to their specific requirements.
+- **State Flags:** Use `isOnDemandEnabled`, `isKillSwitchEnabled`, and `notifyRoamingOnce` to inspect or control tunnel behavior.
+- **UDP Session Floating:** OpenVPN UDP session floating is enabled by default.
+- **Handshake Update Monitoring:** Override `vpnHandshakeUpdateDetected(_:)` to receive handshake update events.
 
 ```swift
 import NetworkExtension
-import VPKWireGuardExtension
+import VPKOpenVPNNetworkExtension
 
-class PacketTunnelProvider: WGPacketTunnelProvider {
+class PacketTunnelProvider: OVPacketTunnelProvider {
    
    override init() {
        super.init()
@@ -77,39 +88,17 @@ class PacketTunnelProvider: WGPacketTunnelProvider {
        debugPrint("\(#function) Read: \(counter.read) and Write:\(counter.write)")
    }
    
-   // optional
    public override func vpnHandshakeUpdateDetected(_ error: Error?) {
-    
-        NSLog("[VPNKIT-NE] Internet Status: \(self.isInternetAvailable) Last Handshake Date: \(String(describing: self.lastHandshakeDate))")
-    
-        guard let error else {
-            NSLog("[VPNKIT-NE] All good!!!")
-            return
-        }
-    
-        NSLog("[VPNKIT-NE] HandshakeError: \(error)")
-        
-        switch error as? HandshakeError {
-        case .failure:
-            // The handshake failed even with an active internet connection.
-            // This suggests a persistent issue with the server or account.
-            //
-            // Recommended Action: Disconnect the tunnel to prevent data leaks
-            // and notify the user.
-            // self.cancelTunnelWithError(...)
-            break
-        case .internetUnreachable:
-            // The handshake failed because there is no internet connection.
-            // This is likely a temporary issue.
-            //
-            // Recommended Action: Wait for the system's network service to
-            // restore connectivity. The tunnel will attempt to reconnect automatically.
-            break
-        case .none:
-            break
-        }
-    }
-    
+       NSLog("[VPNKIT-NE] Internet Status: \(self.isInternetAvailable) Last Handshake Date: \(String(describing: self.lastHandshakeDate))")
+       
+       guard let error else {
+           NSLog("[VPNKIT-NE] Handshake healthy")
+           return
+       }
+       
+       NSLog("[VPNKIT-NE] HandshakeError: \(error)")
+   }
+   
 }
 ```
 
@@ -134,28 +123,15 @@ class PacketTunnelProvider: WGPacketTunnelProvider {
 
  - **File:** `Info.plist`
  - **Description:** This property list file configures essential metadata and specifies the `PacketTunnelProvider` class.
-
+  
 ##### Key Entries:
   - **`CFBundleDisplayName`**: Name of the extension.
   - **`CFBundleExecutable`**: Executable name.
   - **`CFBundleIdentifier`**: Unique identifier for the extension.
   - **`NetworkExtension`**: Defines the `NEProviderClasses` to use the `PacketTunnelProvider` class.
       Set to reference your Packet Tunnel Provider class, e.g., $(PRODUCT_MODULE_NAME).PacketTunnelProvider.
-  - **`NSSystemExtensionUsageDescription`**: Provide a description as your system extension needs access to certain resources (e.g., "This app requires a system extension for VPN functionality").
-  
-##### 🔹 iOS
-
-- **`com.wireguard.ios.app_group_id`**:  
-  Add this key in both **App** and **Network Extension** targets' `Info.plist` as:  
-  `com.wireguard.ios.app_group_id`: `<App-Group-ID>`
-
-##### 🔹 macOS
-
-- **`com.wireguard.macos.app_group_id`**:  
-  Add this key in both **App** and **Network Extension** targets' `Info.plist` as:  
-  `com.wireguard.macos.app_group_id`: `<App-Group-ID>`  
-  *(Optional if App Group capabilities are already added)*
-
+  - **`NSSystemExtensionUsageDescription`**: Provide a description as your System Extension needs access to certain resources (e.g., "This app requires a system extension for VPN functionality").
+  - **`com.vpnkit.<platform>.app_group_id`**: Add new key in both App and Network Extension Targets as `com.vpnkit.<platform>.app_group_id`: `<App-Group-ID>`.
  
  iOS Example:
 ```xml
@@ -170,8 +146,8 @@ class PacketTunnelProvider: WGPacketTunnelProvider {
         <key>NSExtensionPrincipalClass</key>
         <string>$(PRODUCT_MODULE_NAME).PacketTunnelProvider</string>
     </dict>
-    <key>com.wireguard.ios.app_group_id</key>
-    <string>App-Group-ID</string>
+    <key>com.vpnkit.ios.app_group_id</key>
+    <string><!-- Replace with your App Group ID, e.g. TeamID.com.example.vpn --></string>
  </dict>
  </plist>
  ```
@@ -183,7 +159,7 @@ class PacketTunnelProvider: WGPacketTunnelProvider {
  <plist version="1.0">
  <dict>
     <key>CFBundleDisplayName</key>
-    <string>WireGuardNetworkExtension</string>
+    <string>OpenVPNNetworkExtension</string>
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
@@ -241,7 +217,7 @@ class PacketTunnelProvider: WGPacketTunnelProvider {
     <true/>
     <key>com.apple.security.application-groups</key>
     <array>
-        <string>App-Group-ID</string>
+        <string><!-- Replace with your App Group ID, e.g. group.com.example.vpn --></string>
     </array>
     <key>com.apple.security.network.client</key>
     <true/>
@@ -265,6 +241,10 @@ macOS entitlements example:
     <true/>
     <key>com.apple.security.network.server</key>
     <true/>
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>App-Group-ID</string>
+    </array>
 </dict>
 </plist>
 ```
@@ -274,9 +254,7 @@ macOS entitlements example:
  2. **Set up the main entry point** to start the system extension mode.
  3. **Configure `Info.plist`** to provide metadata and specify the provider class.
  4. **Configure `Entitlements.plist`** to define required permissions and capabilities for the extension.
- 5. **Sign the Network Extension:** Ensure the Network Extension target is signed using your developer certificate. In Signing & Capabilities, add an App Group.
-
-
+ 5. **Sign the Network Extension:** Ensure the Network Extension target is signed using your developer certificate. In Signing & Capabilities, add an App Group, Keychain Sharing.
 
  ## **2. Initialize the app**
 
@@ -284,36 +262,35 @@ macOS entitlements example:
  > Refer to: [Initializers](https://github.com/wlvpn/ConsumerVPN-macOS/blob/main/SDK/Documentation/Initializers.md)
 
  ### Primary Objects
- > Refer to: [README macOS](https://github.com/wlvpn/ConsumerVPN-macOS/blob/main/SDK/Documentation/README%20MacOS.md)  
- > Refer to: [VPNKit iOS Guide](https://github.com/wlvpn/ConsumerVPN-macOS/blob/main/SDK/Documentation/VPNKit%20iOS%20Guide.md)
-
+ > Refer to: [README macOS](https://github.com/wlvpn/ConsumerVPN-macOS/blob/main/SDK/Documentation/README%20MacOS.md) 
+ 
 
  ## **3. Connection**
 
- WireGuard's system extension must be successfully installed in order to perform the connection.
+ OpenVPN's system extension must be successfully installed in order to perform the connection.
 
  ### SystemExtension Support (macOS)
 
- This category provides helper methods for managing the installation, approval, and uninstallation of the WireGuard system extension.
+ This category provides helper methods for managing the installation, approval, and uninstallation of the OpenVPN System Extension.
 
  #### `- (BOOL)systemExtensionInstalled`
 
  **Returns:**  
- `YES` if the WireGuard system extension is installed, otherwise `NO`.
+ `YES` if the OpenVPN System Extension is installed, otherwise `NO`.
  **Discussion:**  
-  This method determines if the WireGuard system extension is already present on the system. If the extension is installed, there is no need to initiate a new installation.
+  This method determines if the OpenVPN System Extension is already present on the system. If the extension is installed, there is no need to initiate a new installation.
 
  #### `- (BOOL)systemExtensionApprovalPending`
 
  **Returns:**  
- `YES` if the WireGuard system extension is awaiting user approval, otherwise `NO`.
+ `YES` if the OpenVPN system extension is awaiting user approval, otherwise `NO`.
  **Discussion:**  
  System extensions may require user approval after installation for security reasons. This method checks if such an approval is pending. Applications may need to prompt users to approve the extension in system settings.
 
  #### `- (void)installSystemExtension`
 
  **Discussion:**  
- This method starts the installation process for the WireGuard system extension.  
+ This method starts the installation process for the OpenVPN system extension.  
  The outcome of the installation process will be communicated via notifications:
  - `VPNHelperInstallSuccessNotification`: Sent if the installation is successful.
  - `VPNHelperInstallFailedNotification`: Sent if the installation fails. The error information will be provided in the notification.
@@ -324,7 +301,7 @@ macOS entitlements example:
  #### `- (void)uninstallSystemExtension`
 
  **Discussion:**  
- This method handles the uninstallation of the WireGuard system extension. It ensures that the extension is properly removed from the system, freeing up resources and preventing conflicts.
+ This method handles the uninstallation of the OpenVPN System Extension. It ensures that the extension is properly removed from the system, freeing up resources and preventing conflicts.
 
  **Note:**  
  The uninstallation may also require user interaction or administrative privileges.
@@ -334,7 +311,7 @@ macOS entitlements example:
 
  Installation success or failure is reported via system notifications, allowing the app to asynchronously handle the result. You call a framework function and it will perform asynchronous actions. At various points during the action, a notification will be sent out that allows you to respond to the event.
 
- > Refer to: [Notifications](https://github.com/wlvpn/ConsumerVPN-macOS/blob/main/SDK/Documentation/Notifications.md)
+  > Refer to: [Notifications](https://github.com/wlvpn/ConsumerVPN-macOS/blob/main/SDK/Documentation/Notifications.md)
  
  
  ## **5. Error handling**
@@ -350,23 +327,28 @@ macOS entitlements example:
 
  - **Network Extension Entitlements:** macOS apps require special entitlements to use Network Extensions. Ensure you have the necessary permissions from Apple.
  - **Background Execution:** Packet Tunnel Providers may have limited background execution time.
- - **Performance Considerations:** WireGuard is designed for efficiency, but network performance can still be affected by the device's processing power and network conditions.
+ - **Performance Considerations:** Slower than some newer protocols like WireGuard due to heavier encryption and more complex code. TCP mode can be particularly slow due to double encapsulation (TCP over TCP)
+ - **Mobile Efficiency:** Not as optimized for mobile devices compared to modern protocols like `IKEv2` or `WireGuard`.
+ - **No Native OS Integration:** Not built into most operating systems like `IKEv2` or `L2TP`/`IPsec`.
 
  ### b. Features
 
- - **High Performance:** WireGuard is known for its high-speed cryptographic operations and minimal overhead, making it a preferred choice over other protocols.
- - **Simplicity:** The configuration and operation of WireGuard are simpler compared to other VPN protocols, making it easier to set up and manage.
- - **Security:** WireGuard uses state-of-the-art cryptography and is designed to minimize the attack surface.
+ - **Strong Security:** OpenVPN uses OpenSSL for encryption (supports AES, Blowfish, etc.). Offers authentication with certificates, username/password, and/or pre-shared keys. Supports TLS for secure key exchange.
+ - **Open Source:** Transparent, regularly audited, and improved by the community. No backdoors; security-focused.
+ - **Stability and Reliability:** Maintains stable connections even over unstable networks. Capable of reconnecting and resuming sessions after brief drops.
  - Supports features like **Threat Protection, Multihop, KillSwitch, Connect On demand, Split Tunneling**.
 
- > For more details:  
- > Refer to: [README macOS](https://github.com/wlvpn/ConsumerVPN-macOS/blob/main/SDK/Documentation/README%20MacOS.md)
- > Refer to: [VPNKit iOS Guide](https://github.com/wlvpn/ConsumerVPN-macOS/blob/main/SDK/Documentation/VPNKit%20iOS%20Guide.md)
+ For more details:  
+> Refer to: [README macOS](https://github.com/wlvpn/ConsumerVPN-macOS/blob/main/SDK/Documentation/README%20MacOS.md) 
 
  ### c. Compatibility
 
- - **Device Compatibility:** WireGuard is compatible with both Intel and Apple Silicon Macs and iOS devices.
-
+ - **Device Compatibility:** OpenVPN is compatible with both Intel and Apple Silicon Macs and iOS devices.
+ - **Minimum Deployment Target:**
+    - **iOS**   : 15.0 and above
+    - **macOS** : 12.0 and above
+    - **tvOS**  : 18.0 and above
+    
  > To get the necessary assets/SDK, please contact support@wlvpn.com
 
 ## **7. Handshake Update Implementation**
